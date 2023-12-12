@@ -1,5 +1,7 @@
 Este projeto de conclusão de curso tem como objetivo principal a integração e utilização conjunta das APIs oferecidas pela Cloud Vision e OpenAI. A proposta é desenvolver um sistema que aproveite as funcionalidades e recursos dessas plataformas para obter resultados precisos na análise de dados.
 
+
+
 Para o pleno funcionamento deste projeto, é essencial o cumprimento das seguintes dependências:
 
   
@@ -20,10 +22,6 @@ Para o pleno funcionamento deste projeto, é essencial o cumprimento das seguint
   cupertino_icons: ^1.0.0
   
   pdf: ^3.10.4
-  
-  excel:
-  
-  path_provider:
   
   openai: ^1.0.0
   
