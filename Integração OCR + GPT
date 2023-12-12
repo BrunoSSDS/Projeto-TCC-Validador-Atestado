@@ -118,7 +118,7 @@ class _LeituraOCRState extends State<LeituraOCR> {
   }
   void requestGptResponse() async {
     if (ocrText.isNotEmpty) {
-      final gptPrompt = "Estou enviando o texto de uma imagem digitalizada e preciso que informe se é um atestado ou não e não envie mais nenhuma informação";
+      final gptPrompt = "Adicione oque o GPT Ira tratar";
 
 
       final gptResponse = await processWithGPT(gptPrompt);
