@@ -1,0 +1,437 @@
+import 'dart:io';
+import 'dart:convert';
+import 'dart:typed_data';
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:http/http.dart' as http;
+
+void main() {
+  runApp(LeituraOCR());
+}
+
+class LeituraOCR extends StatefulWidget {
+  @override
+  _LeituraOCRState createState() => _LeituraOCRState();
+}
+
+class _LeituraOCRState extends State<LeituraOCR> {
+  String ocrText = '';
+  Uint8List? selectedImageBytes;
+  TextEditingController ocrResultController = TextEditingController();
+  bool isValid = false;
+  String validationMessage = '';
+  String infoMessage = '';
+  double progressPercentage = 0.0;
+  String crm = '';
+
+  Future<String> performOCR(Uint8List imageBytes) async {
+    final apiKey = 'Adicionar token';
+    final endpoint = 'https://vision.googleapis.com/v1/images:annotate?key=$apiKey';
+    final base64Image = base64Encode(imageBytes);
+
+    final requestBody = jsonEncode({
+      'requests': [
+        {
+          'image': {'content': base64Image},
+          'features': [{'type': 'DOCUMENT_TEXT_DETECTION'}],
+        }
+      ]
+    });
+
+    final response = await http.post(Uri.parse(endpoint), body: requestBody);
+    final decodedJson = jsonDecode(response.body);
+
+    final textAnnotations = decodedJson['responses'][0]['textAnnotations'] as List<dynamic>;
+
+    if (textAnnotations.isNotEmpty) {
+      final text = textAnnotations[0]['description'] as String;
+      return text;
+    } else {
+      return '';
+    }
+  }
+
+  void processImage() async {
+    if (selectedImageBytes != null) {
+      final text = await performOCR(selectedImageBytes!);
+      setState(() {
+        ocrText = text;
+        ocrResultController.text = text;
+      });
+      if (text.isNotEmpty) {
+        extractMedicalInformation(text);
+        processWithGPT(text);
+      } else {
+        showDialog(
+          context: context,
+          builder: (BuildContext context) {
+            return AlertDialog(
+              title: Text('Leitura de OCR'),
+              content: Text('Não foi possível efetuar a leitura do OCR. Nenhum texto detectado na imagem.'),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                  },
+                  child: Text('OK'),
+                ),
+              ],
+            );
+          },
+        );
+      }
+    } else {
+      setState(() {
+        infoMessage = 'Por favor, selecione ou capture uma imagem antes de processar.';
+      });
+    }
+  }
+
+
+  Future<String> processWithGPT(String inputText) async {
+    final apiKey = 'adicionar token';
+    final endpoint = 'https://api.openai.com/v1/engines/davinci/completions';
+
+    final response = await http.post(
+      Uri.parse(endpoint),
+      headers: {
+        'Authorization': 'Bearer $apiKey',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'prompt': inputText,
+        'max_tokens': 50,
+      }),
+    );
+
+    if (response.statusCode == 200) {
+      final decodedJson = jsonDecode(response.body);
+      final gptResult = decodedJson['choices'][0]['text'] as String;
+      setState(() {
+        // Atualize o estado com o texto processado pela GPT
+        ocrText = gptResult;
+      });
+      return gptResult;
+    } else {
+      throw Exception('Erro ao chamar a API do GPT');
+    }
+  }
+  void requestGptResponse() async {
+    if (ocrText.isNotEmpty) {
+      final gptPrompt = "Estou enviando o texto de uma imagem digitalizada e preciso que informe se é um atestado ou não e não envie mais nenhuma informação";
+
+
+      final gptResponse = await processWithGPT(gptPrompt);
+
+      setState(() {
+        infoMessage = gptResponse;
+      });
+    } else {
+      setState(() {
+        infoMessage = 'Por favor, selecione ou capture uma imagem antes de solicitar uma resposta do GPT.';
+      });
+    }
+  }
+  void extractMedicalInformation(String text) async {
+    // Validar o nome do hospital ou sinônimos
+    final isNomeHospitalValid = text.toLowerCase().contains('hospital') ||
+        text.toLowerCase().contains('clínica') ||
+        text.toLowerCase().contains('consulta') ||
+        text.toLowerCase().contains('unidade de saúde') ||
+        text.toLowerCase().contains('centro médico');
+
+    // Validar o número de telefone
+    final isTelefoneValid = text.contains(RegExp(r'\(\d{2}\) \d{4}-\d{4}'));
+
+    // Validar a presença de informações médicas específicas
+    final isInformacoesMedicasValidas = text.toLowerCase().contains('diagnóstico') &&
+        text.toLowerCase().contains('tratamento') &&
+        text.toLowerCase().contains('data') &&
+        (text.toLowerCase().contains('resultado') ||
+            text.toLowerCase().contains('evolução') ||
+            text.toLowerCase().contains('prescrição'));
+
+    // Validar a assinatura do médico
+    final isAssinaturaValida = text.toLowerCase().contains('assinatura') ||
+        text.toLowerCase().contains('carimbo') ||
+        text.toLowerCase().contains('selo');
+
+    // Validar a presença do CRM
+    final isCRMValido = text.contains(RegExp(r'CRM \d+'));
+
+    // Validar a presença do nome da cidade, localidade ou sinônimos
+    final isNomeCidadeValido = text.toLowerCase().contains('cidade') ||
+        text.toLowerCase().contains('localidade') ||
+        text.toLowerCase().contains('endereço') ||
+        text.toLowerCase().contains('bairro') ||
+        text.toLowerCase().contains('CEP');
+
+    // Validar a presença da data gerada
+    final isDataGeradaValida = text.toLowerCase().contains('data gerada') ||
+        text.toLowerCase().contains('data emitida') ||
+        text.toLowerCase().contains('data de emissão');
+
+    // Validar a presença da data final
+    final isDataFinalValida = text.toLowerCase().contains('data final') ||
+        text.toLowerCase().contains('válido até') ||
+        text.toLowerCase().contains('válida até') ||
+        text.toLowerCase().contains('válido até o dia');
+
+    // Validar a presença do nome do paciente
+    final isNomePacienteValido = text.toLowerCase().contains('paciente') ||
+        text.toLowerCase().contains('nome do paciente');
+
+    // Validar a presença do nome do médico ou médica
+    final isNomeMedicoValido = text.toLowerCase().contains('médico') ||
+        text.toLowerCase().contains('médica') ||
+        text.toLowerCase().contains('nome do médico') ||
+        text.toLowerCase().contains('nome da médica');
+
+    // Validar a presença de palavras relacionadas ao atestado médico
+    final isPalavrasAtestadoValidas = text.toLowerCase().contains('atestado') ||
+        text.toLowerCase().contains('afastamento') ||
+        text.toLowerCase().contains('relatório') ||
+        text.toLowerCase().contains('exame') ||
+        text.toLowerCase().contains('declaração médica');
+
+    // Contar o número de validações bem-sucedidas
+    int validCount = 0;
+
+    if (isNomeHospitalValid) validCount++;
+    if (isTelefoneValid) validCount++;
+    if (isInformacoesMedicasValidas) validCount++;
+    if (isAssinaturaValida) validCount++;
+    if (isCRMValido) {
+      validCount++;
+      final crmMatch = RegExp(r'CRM (\d+)').firstMatch(text);
+      crm = crmMatch?.group(1) ?? '';
+      print('CRM: $crm');
+      await validateCRM();
+    }
+    if (isNomeCidadeValido) validCount++;
+    if (isDataGeradaValida) validCount++;
+    if (isDataFinalValida) validCount++;
+    if (isNomePacienteValido) validCount++;
+    if (isNomeMedicoValido) {
+      validCount++;
+    }
+    if (isPalavrasAtestadoValidas) validCount++;
+
+    setState(() {
+      isValid = validCount >= 2;
+
+      if (isValid) {
+        validationMessage = 'Esse documento contem características de Atestado';
+      } else {
+        validationMessage = 'Atestado Inválido ou Fora do Padrão. Tente Novamente';
+      }
+
+      infoMessage = '';
+    });
+  }
+
+  Future<void> validateCRM() async {
+    final apiUrl = 'https://www.consultacrm.com.br/index/api';
+
+    // Remove espaços e caracteres não numéricos do CRM
+    final cleanedCRM = crm.replaceAll(RegExp(r'[^0-9]'), '');
+
+    final response = await http.get(Uri.parse('$apiUrl?tipo=crm&uf=SP&crm=$cleanedCRM'));
+
+    if (response.statusCode == 200) {
+      final responseBody = response.body;
+      if (responseBody.contains('ATIVO')) {
+        setState(() {
+          print('CRM Válido');
+          var isValidCrm = true;
+        });
+      } else {
+        setState(() {
+          print('CRM Inválido');
+          var isValidCrm = false;
+        });
+      }
+    } else {
+      setState(() {
+        print('Erro ao consultar a API do CRM');
+        var isValidCrm = false;
+      });
+    }
+  }
+
+  Future<void> _pickImage() async {
+    final imagePicker = ImagePicker();
+    final pickedFile = await imagePicker.pickImage(source: ImageSource.gallery);
+
+    if (pickedFile != null) {
+      final imageBytes = await pickedFile.readAsBytes();
+      setState(() {
+        selectedImageBytes = Uint8List.fromList(imageBytes);
+        ocrText = '';
+        ocrResultController.clear();
+        isValid = false;
+        validationMessage = '';
+        infoMessage = '';
+      });
+    }
+  }
+
+  Future<void> _openCamera() async {
+    final imagePicker = ImagePicker();
+    final pickedFile = await imagePicker.pickImage(source: ImageSource.camera);
+
+    if (pickedFile != null) {
+      final imageBytes = await pickedFile.readAsBytes();
+      setState(() {
+        selectedImageBytes = Uint8List.fromList(imageBytes);
+        ocrText = '';
+        ocrResultController.clear();
+        isValid = false;
+        validationMessage = '';
+        infoMessage = '';
+      });
+    }
+  }
+
+  void clearProcess() {
+    setState(() {
+      selectedImageBytes = null;
+      ocrText = '';
+      ocrResultController.clear();
+      isValid = false;
+      validationMessage = '';
+      infoMessage = '';
+      crm = ''; // Adicione essa linha para limpar o valor do CRM
+    });
+  }
+
+  Widget build(BuildContext context) {
+    bool hasOcrText = ocrText.isNotEmpty;
+    bool hasSelectedImage = selectedImageBytes != null;
+    bool isValidCrm = isValid && crm.isNotEmpty;
+
+    return MaterialApp(
+      title: 'Leitura OCR',
+      home: Scaffold(
+        appBar: AppBar(
+          title: Text('Adicione Seu Atestado'),
+        ),
+        body: Center(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (hasOcrText)
+                  Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Text(
+                      'Resultado da leitura da imagem digitalizada:',
+                      style: TextStyle(fontSize: 30),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                if (hasOcrText)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                    child: Container(
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey),
+                        borderRadius: BorderRadius.circular(4.0),
+                        color: Colors.white,
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: Text(
+                          ocrText,
+                          style: TextStyle(fontSize: 16),
+                        ),
+                      ),
+                    ),
+                  ),
+                SizedBox(height: 20),
+                if (hasSelectedImage)
+                  Image.memory(
+                    selectedImageBytes!,
+                    height: 200,
+                  ),
+                SizedBox(height: 20),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: _pickImage,
+                      icon: Icon(Icons.attach_file),
+                      label: Text('Arquivo'),
+                      style: ElevatedButton.styleFrom(
+                        primary: Colors.grey,
+                      ),
+                    ),
+                    SizedBox(width: 10),
+                    ElevatedButton.icon(
+                      onPressed: _openCamera,
+                      icon: Icon(Icons.camera_alt),
+                      label: Text('Câmera'),
+                      style: ElevatedButton.styleFrom(
+                        primary: Colors.grey,
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: 20),
+                ElevatedButton(
+                  onPressed: processImage,
+                  child: Text('Processar Imagem'),
+                  style: ElevatedButton.styleFrom(
+                    primary: Colors.green,
+                  ),
+                ),
+                SizedBox(height: 20),
+                ElevatedButton(
+                  onPressed: clearProcess,
+                  child: Text('Limpar'),
+                  style: ElevatedButton.styleFrom(
+                    primary: Colors.red,
+                  ),
+                ),
+                SizedBox(height: 20),
+                if (validationMessage.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                    child: Text(
+                      validationMessage,
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: isValid ? Colors.green : Colors.red,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                SizedBox(height: 10),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  child: Text(
+                    infoMessage,
+                    style: TextStyle(fontSize: 16, color: Colors.red),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    main();
+  }
+
+  void main() {
+    runApp(LeituraOCR());
+  }
+}
